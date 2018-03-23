@@ -1,7 +1,12 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoOTA.h>
+#include "Adafruit_MCP23017.h"
 
 #define DEBUG_PRINT true
+
+const int dataPins[] = {0,1,2,3,4,5,6,7};
+const int strobePin = 8;//active low
+const int busyPin = 9;//active low
 
 int conn;
 char sbuf[512];
@@ -16,11 +21,23 @@ char *password = "";
 char *host_name = "printer";
 
 WiFiClient client;
+Adafruit_MCP23017 mcp;
 
 void setup() {
     Serial.begin(115200);
     while(!Serial) ;
     Serial.println("hi");
+
+    mcp.begin();
+
+    for (int i = 0; i < sizeof(dataPins) / sizeof(dataPins[0]); ++i) {
+      mcp.pinMode(dataPins[i], OUTPUT);
+    }
+    mcp.pinMode(busyPin, INPUT);
+    mcp.pullUp(busyPin, HIGH);
+    mcp.pinMode(strobePin, OUTPUT);
+
+    mcp.digitalWrite(strobePin, HIGH);
 
     WiFi.mode(WIFI_STA);
 
@@ -102,6 +119,9 @@ void intHandler(int dummy) {
 }
 
 void processMessage(char* from, char* where, char* target, char* message){
+    for(int i=0; i<strlen(message); ++i) {
+      printChar(message[i]);
+    }
     if(!strncmp(message, nick, strlen(nick)) && message[strlen(nick)] == ':') {
         char* action = NULL;
         char* args = NULL;
@@ -147,6 +167,29 @@ int read_until(char abort_c, char buffer[], int size) {
   return bytes_read;
 }
 
+uint16_t writeLow(uint8_t low) {
+  uint16_t a = mcp.readGPIOAB();
+  a = low | (a & 0xFF00);
+  mcp.writeGPIOAB(a);
+  return a;
+}
+void printChar(char buffer) {
+  //Write out our buffer
+  writeLow((uint8_t)buffer);
+  //Block and wait for the printer to be ready
+  while (mcp.digitalRead(busyPin)) {
+    delay(0);
+  }
+
+  delay(100);
+  //Tell the printer to write out the data
+  mcp.digitalWrite(strobePin, LOW);
+  delay(100);
+  mcp.digitalWrite(strobePin, HIGH);
+  delay(10);
+
+  writeLow(0);
+}
 int handle_irc() {
 
     char *user, *command, *where, *message, *sep, *target;
@@ -209,6 +252,8 @@ int handle_irc() {
 
                     if (!strncmp(command, "001", 3) && channel != NULL) {
                         raw("JOIN %s\r\n", channel);
+                    } else if (!strncmp(command, "433", 3)) {
+                      raw("NICK %s42\r\n", nick);
                     } else if (!strncmp(command, "PRIVMSG", 7) ) {
                         if (where == NULL || message == NULL) {
                             Serial.println("where or message null");
