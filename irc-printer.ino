@@ -38,6 +38,7 @@ void setup() {
     mcp.pinMode(strobePin, OUTPUT);
 
     mcp.digitalWrite(strobePin, HIGH);
+    Serial.println("Setup done");
 
     WiFi.mode(WIFI_STA);
 
@@ -119,8 +120,11 @@ void intHandler(int dummy) {
 }
 
 void processMessage(char* from, char* where, char* target, char* message){
-    for(int i=0; i<strlen(message); ++i) {
-      printChar(message[i]);
+    char printBuf[82];
+    snprintf(printBuf, sizeof(printBuf), "<%10s> | %s\r\n", from, message);
+    Serial.print(printBuf);
+    for(int i=0; i<strlen(printBuf); ++i) {
+      printChar(printBuf[i]);
     }
     if(!strncmp(message, nick, strlen(nick)) && message[strlen(nick)] == ':') {
         char* action = NULL;
@@ -181,12 +185,12 @@ void printChar(char buffer) {
     delay(0);
   }
 
-  delay(100);
+  delay(1);
   //Tell the printer to write out the data
   mcp.digitalWrite(strobePin, LOW);
-  delay(100);
+  delay(1);
   mcp.digitalWrite(strobePin, HIGH);
-  delay(10);
+  delay(1);
 
   writeLow(0);
 }
@@ -251,9 +255,13 @@ int handle_irc() {
                     if (wordcount < 2) continue;
 
                     if (!strncmp(command, "001", 3) && channel != NULL) {
+                        raw("PRIVMSG NickServ :IDENTIFY %s hunter.2\r\n", nick);
+                        raw("JOIN %s\r\n", channel);
+                    } else if (!strncmp(command, "NOTICE", 3)) {
+                        //Might be nickserv saying we got our nick
                         raw("JOIN %s\r\n", channel);
                     } else if (!strncmp(command, "433", 3)) {
-                      raw("NICK %s42\r\n", nick);
+                        raw("NICK %s_\r\n", nick);
                     } else if (!strncmp(command, "PRIVMSG", 7) ) {
                         if (where == NULL || message == NULL) {
                             Serial.println("where or message null");
