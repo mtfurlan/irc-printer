@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoOTA.h>
-#include "Adafruit_MCP23017.h"
+#include <Wire.h>
+#include <Adafruit_MCP23017.h>
 
 #define DEBUG_PRINT true
 
@@ -11,17 +12,24 @@ const int busyPin = 9;//active low
 int conn;
 char sbuf[512];
 
-char *nick = "printer";
-char *channel = "#test";
-char *host = "10.13.0.229";
+char *nick = "KX-P1124";
+char *channel = "##news";
+char *host = "irc.freenode.net";
 uint16_t port = 6667;
 
-char *ssid = "i3detroit";
+char *ssid = "";
 char *password = "";
-char *host_name = "printer";
+char *host_name = "KX-P1124";
 
 WiFiClient client;
 Adafruit_MCP23017 mcp;
+
+uint16_t writeLow(uint8_t low) {
+  uint16_t a = mcp.readGPIOAB();
+  a = low | (a & 0xFF00);
+  mcp.writeGPIOAB(a);
+  return a;
+}
 
 void setup() {
     Serial.begin(115200);
@@ -29,6 +37,7 @@ void setup() {
     Serial.println("hi");
 
     mcp.begin();
+    writeLow(0);
 
     for (int i = 0; i < sizeof(dataPins) / sizeof(dataPins[0]); ++i) {
       mcp.pinMode(dataPins[i], OUTPUT);
@@ -96,13 +105,6 @@ void reconnect() {
     }
 
 }
-void loop() {
-  ArduinoOTA.handle();
-  if (!client.connected()) {
-      reconnect();
-  }
-  handle_irc();
-}
 
 void raw(char *fmt, ...) {
     va_list ap;
@@ -119,13 +121,42 @@ void intHandler(int dummy) {
     exit(0);
 }
 
+void printChar(char buffer) {
+  //Write out our buffer
+  writeLow((uint8_t)buffer);
+  //Block and wait for the printer to be ready
+  while (mcp.digitalRead(busyPin)) {
+    delay(0);
+  }
+
+  delay(1);
+  //Tell the printer to write out the data
+  mcp.digitalWrite(strobePin, LOW);
+  delay(1);
+  mcp.digitalWrite(strobePin, HIGH);
+  delay(1);
+
+  writeLow(0);
+}
+
 void processMessage(char* from, char* where, char* target, char* message){
-    char printBuf[82];
-    snprintf(printBuf, sizeof(printBuf), "<%10s> | %s\r\n", from, message);
-    Serial.print(printBuf);
-    for(int i=0; i<strlen(printBuf); ++i) {
-      printChar(printBuf[i]);
-    }
+    char printBuf[83];
+    int pos = 0;
+
+    do {
+      int wrote;
+      if(pos == 0) {
+        wrote = snprintf(printBuf, sizeof(printBuf), "<%10s> | %.65s\r\n", from, message);
+      } else {
+        wrote = snprintf(printBuf, sizeof(printBuf), "               %.65s\r\n", message+pos);
+      }
+      printf("%s", printBuf);
+      for(int i=0; i<wrote; ++i) {
+        printChar(printBuf[i]);
+      }
+      pos += wrote-17;
+    } while(pos < strlen(message));
+
     if(!strncmp(message, nick, strlen(nick)) && message[strlen(nick)] == ':') {
         char* action = NULL;
         char* args = NULL;
@@ -171,29 +202,6 @@ int read_until(char abort_c, char buffer[], int size) {
   return bytes_read;
 }
 
-uint16_t writeLow(uint8_t low) {
-  uint16_t a = mcp.readGPIOAB();
-  a = low | (a & 0xFF00);
-  mcp.writeGPIOAB(a);
-  return a;
-}
-void printChar(char buffer) {
-  //Write out our buffer
-  writeLow((uint8_t)buffer);
-  //Block and wait for the printer to be ready
-  while (mcp.digitalRead(busyPin)) {
-    delay(0);
-  }
-
-  delay(1);
-  //Tell the printer to write out the data
-  mcp.digitalWrite(strobePin, LOW);
-  delay(1);
-  mcp.digitalWrite(strobePin, HIGH);
-  delay(1);
-
-  writeLow(0);
-}
 int handle_irc() {
 
     char *user, *command, *where, *message, *sep, *target;
@@ -281,7 +289,7 @@ int handle_irc() {
                         if(strlen(message) > 2) {
                             message[strlen(message)-2] = '\0';
                         }
-                        sprintf(serialBuf, "[from: %s] [where: %s] [reply-to: %s] %s\n", user, where, target, message);
+                        sprintf(serialBuf, "[from: %s] [where: %s] [reply-to: %s] %s\r\n", user, where, target, message);
                         Serial.print(serialBuf);
                         processMessage(user, where, target, message);
                     }
@@ -289,4 +297,11 @@ int handle_irc() {
             }//end if we have entire thing in buffer
         }//end for
     }//end while we read (forever)
+}
+void loop() {
+  ArduinoOTA.handle();
+  if (!client.connected()) {
+      reconnect();
+  }
+  handle_irc();
 }
